@@ -156,119 +156,42 @@ export const supaCustomers = {
 
 
 // ════════════════════════════════════════════════════════════════
-//  PRODUCTS
-// ════════════════════════════════════════════════════════════════
-export interface SupaProduct {
-  id: string; category: string; name: string; icon: string;
-  image_url: string; price: number; desc?: string; description?: string;
-  specs: Record<string, string>; tags: string[];
-  in_stock: boolean; action_type: 'cart' | 'enquiry';
-  variant_groups: any[]; sort_order: number;
-  created_at?: string; updated_at?: string;
-}
-export const supaProducts = {
-  async getAll(): Promise<SupaProduct[]> {
-    return supaFetch('das_products', 'GET', undefined, { select: '*', order: 'sort_order.asc' });
-  },
-  async insert(p: any): Promise<SupaProduct> {
-    const [row] = await supaFetch('das_products', 'POST', { ...p, updated_at: new Date().toISOString() });
-    return row;
-  },
-  async update(id: string, p: any): Promise<void> {
-    await supaFetch('das_products', 'PATCH', { ...p, updated_at: new Date().toISOString() }, { id: `eq.${id}` });
-  },
-  async remove(id: string): Promise<void> {
-    await supaFetch('das_products', 'DELETE', undefined, { id: `eq.${id}` });
-  },
-};
-
-// ════════════════════════════════════════════════════════════════
-//  CATEGORIES
-// ════════════════════════════════════════════════════════════════
-export interface SupaCategory {
-  id: string; name: string; icon: string; sub: string; sort_order: number;
-  created_at?: string; updated_at?: string;
-}
-export const supaCategories = {
-  async getAll(): Promise<SupaCategory[]> {
-    return supaFetch('das_categories', 'GET', undefined, { select: '*', order: 'sort_order.asc' });
-  },
-  async insert(c: Omit<SupaCategory, 'created_at'|'updated_at'>): Promise<SupaCategory> {
-    const [row] = await supaFetch('das_categories', 'POST', { ...c, updated_at: new Date().toISOString() });
-    return row;
-  },
-  async update(id: string, c: Partial<SupaCategory>): Promise<void> {
-    await supaFetch('das_categories', 'PATCH', { ...c, updated_at: new Date().toISOString() }, { id: `eq.${id}` });
-  },
-  async remove(id: string): Promise<void> {
-    await supaFetch('das_categories', 'DELETE', undefined, { id: `eq.${id}` });
-  },
-};
-
-// ════════════════════════════════════════════════════════════════
-//  SETTINGS
-// ════════════════════════════════════════════════════════════════
-export interface SupaSetting {
-  key: string; value: string; updated_at?: string;
-}
-export const supaSettings = {
-  async getAll(): Promise<SupaSetting[]> {
-    return supaFetch('das_settings', 'GET', undefined, { select: '*' });
-  },
-  async upsert(key: string, value: string): Promise<void> {
-    const SUPABASE_URL  = (import.meta as any).env?.VITE_SUPABASE_URL   || '';
-    const SUPABASE_ANON = (import.meta as any).env?.VITE_SUPABASE_ANON_KEY || '';
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/das_settings`, {
-      method: 'POST',
-      headers: {
-        'apikey': SUPABASE_ANON, 'Authorization': `Bearer ${SUPABASE_ANON}`,
-        'Content-Type': 'application/json',
-        'Prefer': 'resolution=merge-duplicates,return=minimal',
-      },
-      body: JSON.stringify({ key, value, updated_at: new Date().toISOString() }),
-    });
-    if (!res.ok) { const e = await res.text(); throw new Error(e); }
-  },
-};
-
-// ════════════════════════════════════════════════════════════════
-//  ADMIN CREDENTIALS
-// ════════════════════════════════════════════════════════════════
-export const supaAdminCreds = {
-  async save(username: string, passwordHash: string): Promise<void> {
-    await supaSettings.upsert('admin_username', username);
-    await supaSettings.upsert('admin_password_hash', passwordHash);
-  },
-  async get(): Promise<{ username: string; passwordHash: string } | null> {
-    try {
-      const rows = await supaSettings.getAll();
-      const u = rows.find(r => r.key === 'admin_username')?.value;
-      const p = rows.find(r => r.key === 'admin_password_hash')?.value;
-      if (u && p) return { username: u, passwordHash: p };
-    } catch {}
-    return null;
-  },
-};
-
-// ════════════════════════════════════════════════════════════════
 //  STORAGE — Upload product images
 // ════════════════════════════════════════════════════════════════
 export async function uploadProductImage(file: File): Promise<string> {
-  const SUPABASE_URL  = (import.meta as any).env?.VITE_SUPABASE_URL   || '';
-  const SUPABASE_ANON = (import.meta as any).env?.VITE_SUPABASE_ANON_KEY || '';
-  const ext      = file.name.split('.').pop() || 'jpg';
+  // Use module-level vars (already resolved at runtime)
+  if (!SUPABASE_URL || !SUPABASE_ANON) {
+    throw new Error('Supabase not configured. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to Vercel environment variables.');
+  }
+
+  const ext      = file.name.split('.').pop()?.toLowerCase() || 'jpg';
   const fileName = `product_${Date.now()}.${ext}`;
   const bucket   = 'das-product-images';
-  const res = await fetch(`${SUPABASE_URL}/storage/v1/object/${bucket}/${fileName}`, {
+  const baseUrl  = SUPABASE_URL.replace(/\/$/, '');
+  const uploadUrl = `${baseUrl}/storage/v1/object/${bucket}/${fileName}`;
+
+  console.log('Uploading to:', uploadUrl);
+
+  const res = await fetch(uploadUrl, {
     method: 'POST',
     headers: {
-      'apikey': SUPABASE_ANON, 'Authorization': `Bearer ${SUPABASE_ANON}`,
-      'Content-Type': file.type, 'x-upsert': 'true',
+      'apikey':        SUPABASE_ANON,
+      'Authorization': `Bearer ${SUPABASE_ANON}`,
+      'Content-Type':  file.type || 'image/jpeg',
+      'x-upsert':      'true',
     },
     body: file,
   });
-  if (!res.ok) { const err = await res.text(); throw new Error(`Image upload failed: ${err}`); }
-  return `${SUPABASE_URL}/storage/v1/object/public/${bucket}/${fileName}`;
+
+  if (!res.ok) {
+    const errText = await res.text();
+    console.error('Upload error:', errText);
+    throw new Error(`Upload failed (${res.status}): ${errText}`);
+  }
+
+  const publicUrl = `${baseUrl}/storage/v1/object/public/${bucket}/${fileName}`;
+  console.log('Upload success:', publicUrl);
+  return publicUrl;
 }
 
 export { supaFetch };

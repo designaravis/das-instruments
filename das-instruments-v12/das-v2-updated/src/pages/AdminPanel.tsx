@@ -9,27 +9,14 @@ interface AdminPanelProps { onLogout: () => void; }
 
 const AdminPanel = ({ onLogout }: AdminPanelProps) => {
   const [tab, setTab]         = useState('dashboard');
-  const [productsLoading, setProductsLoading] = useState(false);
-  const [imageUploading, setImageUploading] = useState(false);
   const [products, setProducts] = useState<Product[]>(() => {
     try { const s = localStorage.getItem('das_admin_products'); return s ? JSON.parse(s) : PRODUCTS; } catch { return PRODUCTS; }
   });
 
-  useEffect(() => {
-    setProductsLoading(true);
-    db.getProductsAsync().then(ps => {
-      setProducts(ps);
-      localStorage.setItem('das_admin_products', JSON.stringify(ps));
-      window.dispatchEvent(new Event('das_products_updated'));
-    }).finally(() => setProductsLoading(false));
-  }, []);
-
-  const saveProducts = (ps: Product[], changed?: Product, isNew?: boolean, deletedId?: string) => {
+  const saveProducts = (ps: Product[]) => {
     setProducts(ps);
     localStorage.setItem('das_admin_products', JSON.stringify(ps));
     window.dispatchEvent(new Event('das_products_updated'));
-    if (changed)   db.upsertProductAsync(changed, isNew || false);
-    if (deletedId) db.deleteProductAsync(deletedId);
   };
 
   // ── Live orders — pulls from Supabase if configured ──────────
@@ -50,7 +37,6 @@ const AdminPanel = ({ onLogout }: AdminPanelProps) => {
   useEffect(() => { refreshOrders(); }, []);
 
   // ── Categories ───────────────────────────────────────────────
-  const [categoriesLoading, setCategoriesLoading] = useState(false);
   const [categories, setCategories] = useState<Category[]>(() => {
     try { const s = localStorage.getItem('das_admin_categories'); return s ? JSON.parse(s) : CATEGORIES; } catch { return CATEGORIES; }
   });
@@ -58,56 +44,26 @@ const AdminPanel = ({ onLogout }: AdminPanelProps) => {
   const [editCat, setEditCat] = useState<Partial<Category> | null>(null);
   const [catForm, setCatForm] = useState({ name:'', icon:'📦', sub:'' });
 
-  useEffect(() => {
-    setCategoriesLoading(true);
-    db.getCategoriesAsync().then(cats => {
-      setCategories(cats);
-      localStorage.setItem('das_admin_categories', JSON.stringify(cats));
-      window.dispatchEvent(new Event('das_categories_updated'));
-    }).finally(() => setCategoriesLoading(false));
-  }, []);
-
-  const saveCategories = (cats: Category[], changed?: Category, isNew?: boolean, deletedId?: string) => {
+  const saveCategories = (cats: Category[]) => {
     setCategories(cats);
     localStorage.setItem('das_admin_categories', JSON.stringify(cats));
     window.dispatchEvent(new Event('das_categories_updated'));
-    if (changed)   db.upsertCategoryAsync(changed, isNew || false);
-    if (deletedId) db.deleteCategoryAsync(deletedId);
   };
 
   // ── Products modal ───────────────────────────────────────────
   const [showProdModal, setShowProdModal] = useState(false);
   const [editProduct, setEditProduct] = useState<any>(null);
+  const [imageUploading, setImageUploading] = useState(false);
 
   // ── Admin credentials change ─────────────────────────────────
   const [credForm, setCredForm]   = useState({ currentPwd:'', newUsername:'', newPwd:'', confirmPwd:'' });
   const [credMsg, setCredMsg]     = useState({ type:'', text:'' });
 
-  const [companySettings, setCompanySettings] = useState({ name:'DAS Instruments & Solutions', email:'dasinstruments@gmail.com', phone:'+91 88072 43902', gst:'33AAAAA0000A1Z5' });
-  const [settingsMsg, setSettingsMsg] = useState({ type:'', text:'' });
-  const [customers, setCustomers] = useState(() => db.getCustomers());
-
-  useEffect(() => {
-    db.getSettingsAsync().then(s => {
-      if (s.company_name || s.company_email) setCompanySettings({ name: s.company_name||'DAS Instruments & Solutions', email: s.company_email||'dasinstruments@gmail.com', phone: s.company_phone||'+91 88072 43902', gst: s.company_gst||'33AAAAA0000A1Z5' });
-    });
-    db.getCustomersAsync().then(setCustomers);
-  }, []);
-
-  const saveCompanySettings = async () => {
-    await db.saveSettingAsync('company_name',  companySettings.name);
-    await db.saveSettingAsync('company_email', companySettings.email);
-    await db.saveSettingAsync('company_phone', companySettings.phone);
-    await db.saveSettingAsync('company_gst',   companySettings.gst);
-    setSettingsMsg({ type:'success', text: isSupabaseConfigured() ? '✅ Saved & synced to cloud!' : '✅ Saved locally.' });
-    setTimeout(() => setSettingsMsg({ type:'', text:'' }), 3000);
-  };
-
   const handleChangeCreds = () => {
     if (!credForm.currentPwd) { setCredMsg({ type:'error', text:'Enter current password.' }); return; }
     if (credForm.newPwd && credForm.newPwd.length < 6) { setCredMsg({ type:'error', text:'New password must be at least 6 characters.' }); return; }
     if (credForm.newPwd && credForm.newPwd !== credForm.confirmPwd) { setCredMsg({ type:'error', text:'New passwords do not match.' }); return; }
-    const res = db.changeAdminCredsAndSync(credForm.currentPwd, credForm.newUsername, credForm.newPwd);
+    const res = db.changeAdminCreds(credForm.currentPwd, credForm.newUsername, credForm.newPwd);
     if (res.ok) {
       setCredMsg({ type:'success', text:'Credentials updated! Use new details next login.' });
       setCredForm({ currentPwd:'', newUsername:'', newPwd:'', confirmPwd:'' });
@@ -126,7 +82,7 @@ const AdminPanel = ({ onLogout }: AdminPanelProps) => {
     { id:'orders',    icon:'📦', label:`Orders (${orders.length})` },
     { id:'categories',icon:'📂', label:'Categories' },
     { id:'products',  icon:'🧪', label:'Products' },
-    { id:'customers', icon:'👥', label:`Customers (${customers.length})` },
+    { id:'customers', icon:'👥', label:`Customers (${db.getCustomers().length})` },
     { id:'settings',  icon:'⚙️', label:'Settings' },
   ];
 
@@ -163,7 +119,7 @@ const AdminPanel = ({ onLogout }: AdminPanelProps) => {
                 { v: '₹'+Math.round(orders.reduce((s,o)=>s+o.grandTotal,0)/100000*100)/100+'L', l:'Total Revenue', t:'All orders' },
                 { v: String(orders.length), l:'Total Orders', t:`${orders.filter(o=>o.status==='pending').length} pending` },
                 { v: String(products.length), l:'Products', t:`${products.filter(p=>!p.inStock).length} out of stock` },
-                { v: String(customers.length), l:'Registered Customers', t:'All time' },
+                { v: String(db.getCustomers().length), l:'Registered Customers', t:'All time' },
               ].map(m=>(
                 <div key={m.l} className="metric-card">
                   <div className="font-condensed text-3xl font-bold" style={{ color:'hsl(var(--navy))' }}>{m.v}</div>
@@ -280,7 +236,7 @@ const AdminPanel = ({ onLogout }: AdminPanelProps) => {
                       <div className="flex gap-2 justify-end">
                         <button className="btn-sm-das" onClick={()=>{ setEditCat(cat); setCatForm({name:cat.name,icon:cat.icon,sub:cat.sub}); setShowCatModal(true); }}>✏️ Edit</button>
                         <button className="btn-danger-das" style={{ padding:'4px 10px' }}
-                          onClick={()=>{ if(confirm(`Delete "${cat.name}"?`)) saveCategories(categories.filter(c=>c.id!==cat.id), undefined, false, cat.id); }}>🗑️</button>
+                          onClick={()=>{ if(confirm(`Delete "${cat.name}"?`)) saveCategories(categories.filter(c=>c.id!==cat.id)); }}>🗑️</button>
                       </div>
                     </td>
                   </tr>
@@ -313,10 +269,10 @@ const AdminPanel = ({ onLogout }: AdminPanelProps) => {
                     </div>
                     <div className="flex gap-3">
                       <button className="btn-primary-das flex-1" disabled={!catForm.name.trim()} onClick={()=>{
-                        let updated: Category[]; let changedCat: Category; let isNewCat=false;
-                        if(editCat?.id) { changedCat={...editCat as Category,...catForm}; updated=categories.map(c=>c.id===editCat.id?changedCat:c); }
-                        else { const id=catForm.name.toLowerCase().replace(/\s+/g,'-').replace(/[^a-z0-9-]/g,''); changedCat={id,...catForm}; updated=[...categories,changedCat]; isNewCat=true; }
-                        saveCategories(updated, changedCat, isNewCat); setShowCatModal(false);
+                        let updated: Category[];
+                        if(editCat?.id) { updated=categories.map(c=>c.id===editCat.id?{...c,...catForm}:c); }
+                        else { const id=catForm.name.toLowerCase().replace(/\s+/g,'-').replace(/[^a-z0-9-]/g,''); updated=[...categories,{id,...catForm}]; }
+                        saveCategories(updated); setShowCatModal(false);
                       }}>{editCat?'Save Changes':'Add Category'}</button>
                       <button className="flex-1 rounded border-none cursor-pointer" style={{ background:'hsl(var(--off2))', color:'hsl(var(--muted-text))' }} onClick={()=>setShowCatModal(false)}>Cancel</button>
                     </div>
@@ -348,7 +304,7 @@ const AdminPanel = ({ onLogout }: AdminPanelProps) => {
                         className="das-select"
                         style={{ padding:'3px 8px', fontSize:'0.82rem', width:'auto' }}
                         value={p.actionType || 'cart'}
-                        onChange={e => { const u={...p, actionType: e.target.value as 'cart'|'enquiry'}; saveProducts(products.map(x => x.id===p.id ? u : x), u, false); }}
+                        onChange={e => saveProducts(products.map(x => x.id===p.id ? {...x, actionType: e.target.value as 'cart'|'enquiry'} : x))}
                       >
                         <option value="cart">🛒 Add to Cart</option>
                         <option value="enquiry">📩 Enquiry Now</option>
@@ -356,7 +312,7 @@ const AdminPanel = ({ onLogout }: AdminPanelProps) => {
                     </td>
                     <td><div className="flex gap-1.5">
                       <button className="btn-sm-das" onClick={()=>{ setEditProduct(p); setShowProdModal(true); }}>Edit</button>
-                      <button className="btn-danger-das" onClick={()=>saveProducts(products.filter(x=>x.id!==p.id), undefined, false, p.id)}>Del</button>
+                      <button className="btn-danger-das" onClick={()=>saveProducts(products.filter(x=>x.id!==p.id))}>Del</button>
                     </div></td>
                   </tr>
                 ))}</tbody>
@@ -381,15 +337,26 @@ const AdminPanel = ({ onLogout }: AdminPanelProps) => {
                         </div>
                       )}
                       <label style={{ display:'flex', alignItems:'center', gap:10, padding:'10px 14px', border:'1.5px dashed hsl(var(--off2))', borderRadius:8, cursor:'pointer', fontSize:'0.9rem', color:'hsl(var(--muted-text))' }}>
-                        {imageUploading ? '⏳ Uploading to cloud…' : '📷 Click to upload image'}
+                        {imageUploading ? '⏳ Uploading…' : '📷 Click to upload image'}
                         <input type="file" accept="image/*" style={{ display:'none' }} onChange={async e=>{
-                          const file = e.target.files?.[0]; if(!file) return;
-                          if(isSupabaseConfigured()) {
+                          const file = e.target.files?.[0];
+                          if (!file) return;
+                          if (isSupabaseConfigured()) {
                             setImageUploading(true);
-                            try { const url = await uploadProductImage(file); setEditProduct((p:any)=>({...p,imageUrl:url})); }
-                            catch(err) { alert('Image upload failed. Make sure Supabase Storage bucket "das-product-images" exists.\n'+err); }
-                            finally { setImageUploading(false); }
-                          } else { const url=URL.createObjectURL(file); setEditProduct((p:any)=>({...p,imageUrl:url})); }
+                            try {
+                              const url = await uploadProductImage(file);
+                              setEditProduct((p:any) => ({...p, imageUrl: url}));
+                            } catch(err: any) {
+                              console.error('Upload error:', err);
+                              alert('Image upload failed:\n' + (err?.message || err));
+                            } finally {
+                              setImageUploading(false);
+                            }
+                          } else {
+                            // Local fallback
+                            const url = URL.createObjectURL(file);
+                            setEditProduct((p:any) => ({...p, imageUrl: url}));
+                          }
                         }} />
                       </label>
                     </div>
@@ -495,8 +462,8 @@ const AdminPanel = ({ onLogout }: AdminPanelProps) => {
 
                     <div className="flex gap-4">
                       <button className="btn-primary-das flex-1" style={{ fontSize:'0.95rem', padding:'10px' }} onClick={()=>{
-                        if(editProduct.id){ const u={...editProduct,price:+editProduct.price}; saveProducts(products.map((p:any)=>p.id===editProduct.id?u:p), u, false); }
-                        else { const n={...editProduct,id:'p'+Date.now(),icon:'🔬',tags:[],price:+editProduct.price}; saveProducts([...products,n], n, true); }
+                        if(editProduct.id){saveProducts(products.map((p:any)=>p.id===editProduct.id?{...editProduct,price:+editProduct.price}:p));}
+                        else{saveProducts([...products,{...editProduct,id:'p'+Date.now(),icon:'🔬',tags:[],price:+editProduct.price}]);}
                         setShowProdModal(false);
                       }}>Save Product</button>
                       <button className="flex-1 rounded border-none cursor-pointer" style={{ background:'hsl(var(--off2))', color:'hsl(var(--muted-text))', fontSize:'0.95rem' }} onClick={()=>setShowProdModal(false)}>Cancel</button>
@@ -522,10 +489,10 @@ const AdminPanel = ({ onLogout }: AdminPanelProps) => {
             <div className="data-table">
               <table><thead><tr>{['Name','Email','Phone','Company','Orders','Registered'].map(h=><th key={h}>{h}</th>)}</tr></thead>
                 <tbody>
-                  {customers.length === 0 && (
+                  {db.getCustomers().length === 0 && (
                     <tr><td colSpan={6} style={{ textAlign:'center', padding:'2rem', color:'hsl(var(--muted-text))' }}>No registered customers yet</td></tr>
                   )}
-                  {customers.map(c=>(
+                  {db.getCustomers().map(c=>(
                     <tr key={c.id}>
                       <td className="font-semibold">{c.name}</td>
                       <td>{c.email}</td>
